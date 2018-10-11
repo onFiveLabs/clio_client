@@ -35,8 +35,8 @@ module ClioClient
       make_api_request(req, uri, parse)
     end
 
-    def post(path, body ="", parse = true)
-      uri = base_uri("#{api_prefix}/#{path}")        
+    def post(path, body ="", params = {}, parse = true)
+      uri = base_uri("#{api_prefix}/#{path}", params)        
       req = Net::HTTP::Post.new(uri.request_uri)
       req.body = body
       req.add_field("Content-Type", "application/json")
@@ -55,14 +55,29 @@ module ClioClient
       make_request(req, uri, parse)
     end
 
-    def make_request(req, uri, parse = true)
+    def make_request(req, uri, parse = true, retry_on_unauthorized = true)
       req.add_field("Accept", "text/json")
       n = Net::HTTP.new(uri.host, uri.port)
       n.use_ssl = uri.scheme == 'https'
       res = n.start do |http|
         http.request(req)
       end
-      parse_response(res, parse)
+      if retry_on_unauthorized and !self.refresh_token.blank? and uri.path != "/oauth/token"
+        begin
+          parse_response(res, parse)
+        rescue ClioClient::Unauthorized => ex
+          begin
+            self.refresh_access_token
+          rescue
+            raise ex
+          end
+          
+          req["Authorization"] = "Bearer #{self.access_token}"
+          self.make_request(req, uri, parse, false)
+        end  
+      else
+        parse_response(res, parse)
+      end
     end
 
     def parse_response(res, parse)
@@ -78,6 +93,8 @@ module ClioClient
           message = res.body
         end
         raise ClioClient::Unauthorized.new(message)
+      when Net::HTTPUnprocessableEntity
+        raise ClioClient::BadRequest.new(parse_body(res.body)["message"])
       when Net::HTTPBadRequest
         raise ClioClient::BadRequest.new(parse_body(res.body)["message"])
       when Net::HTTPSeeOther
