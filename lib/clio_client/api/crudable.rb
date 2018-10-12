@@ -7,6 +7,13 @@ module ClioClient
       end
 
       def create(params = {})
+        new_params = {}
+        params.each do |k, v|
+          if k.to_s.include?('_id')
+            new_params[k.to_s.split('_id')[0]] = { id: v }
+          end
+        end
+        params.merge!(new_params)
         begin
           resource = params.is_a?(Array) ? create_plural(params) : create_singular(params)
         rescue ClioClient::UnknownResponse
